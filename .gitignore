@@ -1,0 +1,8 @@
+# lokale n8n-Installation und Daten, nie veroeffentlichen
+n8n-runtime/
+n8n-lokal/
+node_modules/
+*.log
+.env
+*.sqlite
+*.db

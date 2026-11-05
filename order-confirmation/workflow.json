@@ -1,0 +1,136 @@
+{
+  "name": "Order Confirmation",
+  "nodes": [
+    {
+      "parameters": {
+        "events": ["checkout.session.completed"]
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Stripe Checkout Completed Trigger",
+      "type": "n8n-nodes-base.stripeTrigger",
+      "typeVersion": 1,
+      "position": [0, 300],
+      "webhookId": "a1b2c3d4-0000-4000-8000-0000000000aa",
+      "credentials": {
+        "stripeApi": { "id": "1", "name": "Stripe Test" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const session = $input.first().json.data?.object || {};\nconst created = session.created ? new Date(session.created * 1000) : new Date();\nreturn [{\n  json: {\n    orderNumber: session.id || 'unknown',\n    date: created.toISOString().slice(0, 10),\n    amountEur: ((session.amount_total || 0) / 100).toFixed(2),\n    productName: session.metadata?.product_name || 'Online order',\n    customerEmail: session.customer_details?.email || session.customer_email || ''\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Normalize Order Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SPREADSHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Bestellungen"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Bestellnummer": "={{ $json.orderNumber }}",
+            "Datum": "={{ $json.date }}",
+            "Betrag EUR": "={{ $json.amountEur }}",
+            "Produkt": "={{ $json.productName }}",
+            "Kunden-E-Mail": "={{ $json.customerEmail }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Append Order to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [480, 200],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "2", "name": "Google Sheets" }
+
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "shop@example.com",
+        "toEmail": "={{ $('Normalize Order Data').item.json.customerEmail }}",
+        "subject": "=Ihre Bestellung {{ $('Normalize Order Data').item.json.orderNumber }}",
+        "emailFormat": "text",
+        "text": "=Hallo,\n\nvielen Dank für Ihre Bestellung!\n\nBestellnummer: {{ $('Normalize Order Data').item.json.orderNumber }}\nProdukt: {{ $('Normalize Order Data').item.json.productName }}\nBetrag: {{ $('Normalize Order Data').item.json.amountEur }} EUR\n\nIhre Rechnung folgt in Kürze.\n\nFreundliche Grüße\nIhr Shop-Team",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Send Customer Confirmation Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [720, 200],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "smtp": { "id": "3", "name": "SMTP" }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "shop@example.com",
+        "toEmail": "admin@example.com",
+        "subject": "Fehler im Workflow",
+        "emailFormat": "text",
+        "text": "=Im Workflow \"Order Confirmation\" ist ein Fehler aufgetreten:\n\n{{ $json.error ? ($json.error.message || JSON.stringify($json.error)) : JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "Send Error Notification Email",
+
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [720, 440],
+      "credentials": {
+        "smtp": { "id": "3", "name": "SMTP" }
+      }
+    }
+  ],
+  "connections": {
+    "Stripe Checkout Completed Trigger": {
+      "main": [[{ "node": "Normalize Order Data", "type": "main", "index": 0 }]]
+    },
+    "Normalize Order Data": {
+      "main": [
+        [{ "node": "Append Order to Google Sheet", "type": "main", "index": 0 }],
+        [{ "node": "Send Error Notification Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Append Order to Google Sheet": {
+      "main": [
+        [{ "node": "Send Customer Confirmation Email", "type": "main", "index": 0 }],
+        [{ "node": "Send Error Notification Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Customer Confirmation Email": {
+      "main": [
+        [],
+        [{ "node": "Send Error Notification Email", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

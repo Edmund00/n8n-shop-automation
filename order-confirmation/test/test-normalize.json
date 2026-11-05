@@ -1,0 +1,73 @@
+{
+ "name": "TEST Normalize Order Data",
+ "nodes": [
+  {
+   "parameters": {},
+   "id": "t-0001",
+   "name": "Manual Trigger",
+   "type": "n8n-nodes-base.manualTrigger",
+   "typeVersion": 1,
+   "position": [
+    0,
+    300
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "return [{ json: {\n  id: 'evt_test_123',\n  type: 'checkout.session.completed',\n  data: { object: {\n    id: 'cs_test_a1B2c3D4',\n    created: 1793900000,\n    amount_total: 3990,\n    currency: 'eur',\n    customer_details: { email: 'kunde@example.com' },\n    metadata: { product_name: 'Beispiel-Produkt' }\n  } }\n} }];"
+   },
+   "id": "t-0002",
+   "name": "Sample Stripe Event",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    240,
+    300
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "const session = $input.first().json.data?.object || {};\nconst created = session.created ? new Date(session.created * 1000) : new Date();\nreturn [{\n  json: {\n    orderNumber: session.id || 'unknown',\n    date: created.toISOString().slice(0, 10),\n    amountEur: ((session.amount_total || 0) / 100).toFixed(2),\n    productName: session.metadata?.product_name || 'Online order',\n    customerEmail: session.customer_details?.email || session.customer_email || ''\n  }\n}];"
+   },
+   "id": "a1b2c3d4-0002-4000-8000-000000000002",
+   "name": "Normalize Order Data",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    480,
+    300
+   ]
+  }
+ ],
+ "connections": {
+  "Manual Trigger": {
+   "main": [
+    [
+     {
+      "node": "Sample Stripe Event",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Sample Stripe Event": {
+   "main": [
+    [
+     {
+      "node": "Normalize Order Data",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "settings": {
+  "executionOrder": "v1"
+ },
+ "active": false,
+ "pinData": {},
+ "tags": [],
+ "id": "testNormalize01"
+}
