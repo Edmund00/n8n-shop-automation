@@ -1,0 +1,173 @@
+{
+  "name": "Daily Sales Report",
+  "active": false,
+  "nodes": [
+    {
+      "id": "sales-schedule",
+      "name": "Every Day at 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-orders",
+      "name": "Read Order Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [240, 0],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_ORDERS_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Orders",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2 Placeholder"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "calculate-report",
+      "name": "Calculate Yesterday Sales",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Standalone fixture mode: set __reportDate on the first input item.\n// Example target: __reportDate: '2026-11-04'. No other nodes are referenced.\n// Each non-empty row represents one unique order for one product.\nconst rows = $input.all().map(item => item.json);\nconst timeZone = 'Europe/Berlin';\nfunction localDate(date) {\n  const parts = new Intl.DateTimeFormat('en-US', {\n    timeZone, year: 'numeric', month: '2-digit', day: '2-digit'\n  }).formatToParts(date);\n  const value = type => parts.find(part => part.type === type).value;\n  return `${value('year')}-${value('month')}-${value('day')}`;\n}\nfunction validDateOnly(value) {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;\n  const date = new Date(value + 'T12:00:00Z');\n  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;\n}\nconst override = rows[0]?.__reportDate;\nlet reportDate;\nif (override !== undefined) {\n  if (typeof override !== 'string' || !validDateOnly(override)) throw new Error('Invalid __reportDate fixture override.');\n  reportDate = override;\n} else {\n  const today = localDate(new Date());\n  const previous = new Date(today + 'T12:00:00Z');\n  previous.setUTCDate(previous.getUTCDate() - 1);\n  reportDate = previous.toISOString().slice(0, 10);\n}\nfunction orderDate(value) {\n  if (typeof value !== 'string') throw new Error('Order dates must be ISO strings.');\n  const text = value.trim();\n  if (validDateOnly(text)) return text;\n  if (!/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$/.test(text)) {\n    throw new Error('Use YYYY-MM-DD or an ISO timestamp with an explicit timezone.');\n  }\n  if (!validDateOnly(text.slice(0, 10))) throw new Error('Invalid order calendar date.');\n  const date = new Date(text);\n  if (!Number.isFinite(date.getTime())) throw new Error('Invalid order timestamp.');\n  return localDate(date);\n}\nfunction centsFromEur(value) {\n  if (typeof value !== 'string' && typeof value !== 'number') throw new Error('Invalid amountEur type.');\n  const text = String(value).trim();\n  if (!/^-?\\d+(?:\\.\\d{1,2})?$/.test(text)) throw new Error('amountEur must use a decimal point and at most two decimal places.');\n  const negative = text.startsWith('-');\n  const unsigned = negative ? text.slice(1) : text;\n  const [whole, fraction = ''] = unsigned.split('.');\n  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));\n  if (!Number.isSafeInteger(cents)) throw new Error('amountEur exceeds the supported range.');\n  return negative ? -cents : cents;\n}\nlet orderCount = 0;\nlet revenueCents = 0;\nconst seenOrders = new Set();\nconst productCounts = new Map();\nfor (const row of rows) {\n  const fields = ['orderNumber', 'date', 'amountEur', 'productName', 'customerEmail'];\n  if (fields.every(field => row[field] === undefined || row[field] === null || String(row[field]).trim() === '')) continue;\n  const date = orderDate(row.date);\n  if (date !== reportDate) continue;\n  const number = String(row.orderNumber ?? '').trim();\n  const product = String(row.productName ?? '').trim();\n  if (!number || !product) throw new Error('An order is missing orderNumber or productName.');\n  if (seenOrders.has(number)) throw new Error('Duplicate orderNumber in the reporting period. Expected one row per order.');\n  seenOrders.add(number);\n  revenueCents += centsFromEur(row.amountEur);\n  if (!Number.isSafeInteger(revenueCents)) throw new Error('Total revenue exceeds the supported range.');\n  orderCount += 1;\n  productCounts.set(product, (productCounts.get(product) ?? 0) + 1);\n}\nconst ranking = [...productCounts.entries()].sort((a, b) => {\n  if (a[1] !== b[1]) return b[1] - a[1];\n  return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;\n});\nconst absoluteCents = Math.abs(revenueCents);\nconst revenueEur = `${revenueCents < 0 ? '-' : ''}${Math.floor(absoluteCents / 100)}.${String(absoluteCents % 100).padStart(2, '0')}`;\nconst topProduct = ranking.length ? ranking[0][0] : 'No orders yesterday';\nconst topProductOrderCount = ranking.length ? ranking[0][1] : 0;\nconst summary = orderCount === 0\n  ? `Daily sales report for ${reportDate} (${timeZone})\\nNo orders yesterday\\nOrders: 0\\nRevenue: EUR 0.00\\nTop product: No orders yesterday`\n  : `Daily sales report for ${reportDate} (${timeZone})\\nOrders: ${orderCount}\\nRevenue: EUR ${revenueEur}\\nTop product: ${topProduct} (${topProductOrderCount} orders)`;\nreturn [{ json: { reportDate, timeZone, orderCount, revenueEur, topProduct, topProductOrderCount, summary } }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "send-report",
+      "name": "Send Daily Sales Summary",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [720, 0],
+      "parameters": {
+        "fromEmail": "automation@example.com",
+        "toEmail": "reports@example.com",
+        "subject": "={{ 'Daily Sales Report - ' + $json.reportDate }}",
+        "emailFormat": "text",
+        "text": "={{ $json.summary }}",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "REPLACE_WITH_SMTP_CREDENTIAL_ID",
+          "name": "SMTP Placeholder"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "sales-alert",
+      "name": "Send Sales Workflow Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [720, 280],
+      "parameters": {
+        "fromEmail": "automation@example.com",
+        "toEmail": "alerts@example.com",
+        "subject": "Daily Sales Report - execution error",
+        "emailFormat": "text",
+        "text": "A processing step failed in Daily Sales Report. Review the failed node in the n8n execution history. The daily report may not have been delivered. This alert intentionally excludes customer data, credentials and raw error messages.",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "REPLACE_WITH_SMTP_CREDENTIAL_ID",
+          "name": "SMTP Placeholder"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every Day at 07:00": {
+      "main": [
+        [
+          {
+            "node": "Read Order Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Order Rows": {
+      "main": [
+        [
+          {
+            "node": "Calculate Yesterday Sales",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Sales Workflow Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Yesterday Sales": {
+      "main": [
+        [
+          {
+            "node": "Send Daily Sales Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Sales Workflow Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Daily Sales Summary": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Send Sales Workflow Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Berlin"
+  },
+  "pinData": {}
+}
