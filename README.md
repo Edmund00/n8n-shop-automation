@@ -18,6 +18,12 @@ The workflows are drafted with AI assistance (Claude), then reviewed and tested 
 
 Notes on running n8n locally for free: [docs/n8n-lokal-installieren.md](docs/n8n-lokal-installieren.md)
 
+## Known limitations
+
+- Local import and sample-data checks of the Code nodes passed. Live integrations (Stripe, Google Sheets, OpenAI, SMTP) and complete workflow runs are not tested yet.
+- Overlapping runs may process a product twice, and product updates rely on stable sheet row positions.
+- The daily report reads the whole sheet and assumes one row per order. Orders with several products would need a different model.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
